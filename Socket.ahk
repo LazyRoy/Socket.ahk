@@ -1,9 +1,13 @@
+;ahk
+
 class Socket
 {
 	static WM_SOCKET := 0x9987, MSG_PEEK := 2
 	static FD_READ := 1, FD_ACCEPT := 8, FD_CLOSE := 32
 	static Blocking := True, BlockSleep := 50
 	
+	static AddressFamily := 2 ; AF_INET
+
 	__New(Socket:=-1)
 	{
 		static Init
@@ -33,22 +37,25 @@ class Socket
 		Next := pAddrInfo := this.GetAddrInfo(Address)
 		while Next
 		{
+			ai_family := NumGet(Next+0, 4, "Int")
 			ai_addrlen := NumGet(Next+0, 16, "UPtr")
 			ai_addr := NumGet(Next+0, 16+(2*A_PtrSize), "Ptr")
-			if ((this.Socket := DllCall("Ws2_32\socket", "Int", NumGet(Next+0, 4, "Int")
+			if ((this.Socket := DllCall("Ws2_32\socket", "Int", ai_family
 				, "Int", this.SocketType, "Int", this.ProtocolId, "UInt")) != -1)
 			{
 				if (DllCall("Ws2_32\WSAConnect", "UInt", this.Socket, "Ptr", ai_addr
 					, "UInt", ai_addrlen, "Ptr", 0, "Ptr", 0, "Ptr", 0, "Ptr", 0, "Int") == 0)
 				{
-					DllCall("Ws2_32\freeaddrinfo", "Ptr", pAddrInfo) ; TODO: Error Handling
+					this.FreeAddrInfo(pAddrInfo)
 					return this.EventProcRegister(this.FD_READ | this.FD_CLOSE)
-				}
+				} 
 				this.Disconnect()
+			} else {
+				throw Exception("Error socket",, this.GetLastError())
 			}
 			Next := NumGet(Next+0, 16+(3*A_PtrSize), "Ptr")
 		}
-		throw Exception("Error connecting")
+		throw Exception("Error connecting",, this.GetLastError())
 	}
 	
 	Bind(Address)
@@ -58,27 +65,30 @@ class Socket
 		Next := pAddrInfo := this.GetAddrInfo(Address)
 		while Next
 		{
+			ai_family := NumGet(Next+0, 4, "Int")
 			ai_addrlen := NumGet(Next+0, 16, "UPtr")
 			ai_addr := NumGet(Next+0, 16+(2*A_PtrSize), "Ptr")
-			if ((this.Socket := DllCall("Ws2_32\socket", "Int", NumGet(Next+0, 4, "Int")
+			if ((this.Socket := DllCall("Ws2_32\socket", "Int", ai_family
 				, "Int", this.SocketType, "Int", this.ProtocolId, "UInt")) != -1)
 			{
 				if (DllCall("Ws2_32\bind", "UInt", this.Socket, "Ptr", ai_addr
 					, "UInt", ai_addrlen, "Int") == 0)
 				{
-					DllCall("Ws2_32\freeaddrinfo", "Ptr", pAddrInfo) ; TODO: ERROR HANDLING
+					this.FreeAddrInfo(pAddrInfo)
 					return this.EventProcRegister(this.FD_READ | this.FD_ACCEPT | this.FD_CLOSE)
 				}
 				this.Disconnect()
 			}
 			Next := NumGet(Next+0, 16+(3*A_PtrSize), "Ptr")
 		}
-		throw Exception("Error binding")
+		throw Exception("Error binding",, this.GetLastError())
 	}
 	
 	Listen(backlog=32)
 	{
-		return DllCall("Ws2_32\listen", "UInt", this.Socket, "Int", backlog) == 0
+		if DllCall("Ws2_32\listen", "UInt", this.Socket, "Int", backlog) != 0
+			throw Exception("Error calling listen",, this.GetLastError())
+		return true 
 	}
 	
 	Accept()
@@ -168,13 +178,19 @@ class Socket
 		; TODO: Use GetAddrInfoW
 		Host := Address[1], Port := Address[2]
 		VarSetCapacity(Hints, 16+(4*A_PtrSize), 0)
+		NumPut(this.AddressFamily, Hints, 4, "Int")
 		NumPut(this.SocketType, Hints, 8, "Int")
 		NumPut(this.ProtocolId, Hints, 12, "Int")
 		if (Error := DllCall("Ws2_32\getaddrinfo", "AStr", Host, "AStr", Port, "Ptr", &Hints, "Ptr*", Result))
 			throw Exception("Error calling GetAddrInfo",, Error)
 		return Result
 	}
-	
+
+	FreeAddrInfo(pAddrInfo)
+	{
+		DllCall("Ws2_32\freeaddrinfo", "Ptr", pAddrInfo) ; TODO: Error Handling
+	}
+
 	OnMessage(wParam, lParam, Msg, hWnd)
 	{
 		Critical
